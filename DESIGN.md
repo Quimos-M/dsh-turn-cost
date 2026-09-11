@@ -243,7 +243,7 @@ node scripts/replay-session.mjs <会话目录> --tree --pages
 | 聚合自检（真实数据） | 逐会话自身口径之和 == 子代理聚合合计 ✓；任一会话自身口径 ≤ 整段口径（无重复计数）✓；10+ 个真实会话全部通过 |
 | 弹窗分页（真实数据） | 会话 pill 弹窗 **6 页**（总计 / 主 Agent / 4 个子代理各一页），4 个每轮 pill 各 **3 页**（本轮总计 / 本轮自身 / 该轮子代理）——`node scripts/replay-session.mjs <会话目录> --tree --pages` 逐页打印核对 ✓；逐页行数实测：第 1 页固定 6 行、会话口径主 Agent 页 5 行、每轮口径主 Agent 页 6 行、子代理页 6 行（该子代理有模型行时 7 行）——都在 `.detailsPaged` 的 7 行（162px）最低高度内，翻页不抖 |
 | 分页不改变聚合 | 同一份冻结会话快照（父会话 + 4 个子会话）在改造前后跑 `--tree --json`：自身 ¥5.675666 / 子代理 ¥2.320270 / 合计 ¥7.995936、`checks` 与 `rows` 逐项一致 ✓；新增字段只是三桶与细目（`byTurn` 的三桶之和 == 子代理合计 ✓） |
-| 热重载 | `dev_reload_package dsh-turn-cost` → host fiber 重建、`client ✓ (lib/client.js)`，重载前后均 `[active]` ✓ |
+| 装配 | 按官方装配路径（profile `dependencies` link + `bundles`，重启后加载）：host 与 client 均正常加载 ✓ |
 | 卸载洁净 | 从 profile 的 `bundles` / `dependencies` 移除后重启：投影注册与两个槽位条目一并消失，无残留（同槽位幂等让位，不会因重复装配报错） |
 | 目视反馈修复（第一轮） | ① 会话 pill 掉到第二行 → portal 进原生统计行 ✓ ② ¥ 图标 + ¥ 文本重复标注 → 金币图标 + `花费 X CNY` ✓ |
 | 目视反馈修复（第二轮） | ③ 每轮 pill 一直在分支之前 → 落位改为"不依赖结构假设"：`findActionRow` 向上找真动作行 + portal + MutationObserver + 双线索识别 + 降级可见标记（用户截图确认位置已正确 ✓） ④ 金币 ￥ 太小 → 按原生图标基准（r=6.375/1.25）重画并放大 ¥ 字面 ⑤ 脚注文案改为「DeepSeek 官方 API 价格」 |
