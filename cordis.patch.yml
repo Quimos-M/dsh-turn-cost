@@ -1,0 +1,16 @@
+# ============================================================================
+# dsh-turn-cost —— DSH bundle patch（本插件的"挂载声明"）
+# ============================================================================
+# DSH 启动时按 bundle 层栈叠加各插件 patch；本文件把 host 半（session 投影
+# 单元 turnCost）插入 profile 的配置树。client 半由 package.json 的
+# dsh.client 声明自动装配（platform: web），无需在此声明。
+#
+# 安装：
+#   dsh plugin --profile web add dsh-turn-cost
+#   或本地开发：dsh plugin --profile web add link:<本目录绝对路径>
+# ============================================================================
+
+- insert:
+    - id: dsh-turn-cost
+      name: dsh-turn-cost
+      config: {}
