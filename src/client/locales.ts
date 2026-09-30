@@ -44,6 +44,9 @@ export type TurnCostKey =
   | 'cost.estimated'
   | 'cost.placeFallback'
   | 'cost.noData'
+  | 'cost.unpricedMarker'
+  | 'cost.unpricedAmount'
+  | 'cost.unpricedNote'
   | 'cost.prevPage'
   | 'cost.nextPage'
 
@@ -90,6 +93,9 @@ export const zh: Record<TurnCostKey, string> = {
   'cost.estimated': '含未收录模型，按同类价估算',
   'cost.placeFallback': '未定位',
   'cost.noData': '暂无花费数据',
+  'cost.unpricedMarker': '未计价 provider',
+  'cost.unpricedAmount': '未计价',
+  'cost.unpricedNote': '未计入金额（这些 provider 不在计价白名单内）：',
   'cost.prevPage': '上一页',
   'cost.nextPage': '下一页',
 }
@@ -130,6 +136,9 @@ export const en: Record<TurnCostKey, string> = {
   'cost.estimated': 'includes an unpriced model, estimated at the closest tier',
   'cost.placeFallback': 'unplaced',
   'cost.noData': 'No cost data yet',
+  'cost.unpricedMarker': 'unpriced provider',
+  'cost.unpricedAmount': 'unpriced',
+  'cost.unpricedNote': 'excluded from the amount (providers outside the pricing allow-list):',
   'cost.prevPage': 'Previous page',
   'cost.nextPage': 'Next page',
 }

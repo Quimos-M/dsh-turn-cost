@@ -68,7 +68,7 @@
 | 2026-08-12 – 08-17（无峰谷） | `deepseek-v4-pro` 正式版 | 0.025 | 3.0 | 6.0 |
 
 - **峰谷规则**：高峰 = 北京时间**周一至周五** `09:00–12:00`、`14:00–18:00`，其余（含周末）全天谷价；峰价 = 谷价 × 2。规则本身也版本化（08-17 起为"每天峰谷"，08-23 起改为"仅工作日"）。
-- 未收录模型 → 按现行 flash 价估算并在 UI 标 `≈`；非 `deepseek-official` 路由默认不计价（可用配置放宽）。
+- 未收录模型 → 按现行 flash 价估算并在 UI 标 `≈`；**非官方 provider 路由默认不计价**（可用配置 `pricedProviders` 放宽，`'*'` = 全放开）。官方 provider id **显式列举**在 `src/providers.ts`（唯一维护点，勿在别处再写死）：`deepseek-official`（DSH 0.1.5-rc.1 及更早的内建官方 provider）与 `deepseek-account`（DSH 0.2.0-rc.2 起账号登录/桌面端使用的官方 provider）。
 - 来源：[TechWeb 9/9 调价](https://www.techweb.com.cn/it/2026-09-09/2978890.shtml)、[驱动人生（新价表 + v4.1-flash 路由说明）](https://www.160.com/article/13680.html)、[CNMO（8/17 峰谷生效）](https://ai.cnmo.com/news/816100.html)、[DoNews（V4 Pro 原价）](https://www.donews.com/news/detail/4/6673100.html)。
 
 ---
@@ -158,7 +158,7 @@ dsh-turn-cost/
                           dsh.bundle.patch → cordis.patch.yml；dsh.client{platform:web}
   cordis.patch.yml        profile 挂载声明（insert id=dsh-turn-cost）
   tsconfig.json           全量类型检查配置
-  tsdown.config.ts        node 半 3 入口 + 浏览器 bundle
+  tsdown.config.ts        node 半 4 入口 + 浏览器 bundle
   build/web-platform.ts   平台模块表（DSH 官方 seed 的**子集**）
   build/tsdown.client.ts  外部 UI 插件 preset：闭包工厂 + lightningcss CSS Modules 内联 + 纯度门
   scripts/build.sh        DSH_CHECKOUT 探测 → junction 链接开发期依赖 → tsc 类型检查
@@ -166,6 +166,8 @@ dsh-turn-cost/
                               扫子会话日志、跑客户端那份聚合做整棵树核对
   src/types.ts            共享纯类型 + 投影 key 合并（SessionProjectionMap/StateMap）
   src/prices.ts           价表 + 峰谷判定 + 三桶计价（纯函数）
+  src/providers.ts        计价 provider 白名单（**唯一维护点**）：官方 id 显式列举 +
+                          判定函数；新增/改名官方 provider 只改这里
   src/projection.ts       turnCost 折叠：状态、wire 视图、全函数 schema、never-throw 契约
   src/index.ts            host 插件：注册投影单元
   src/client/index.tsx    client 插件：字典 + 两个 list 槽位条目 + 幂等注册
@@ -181,8 +183,8 @@ dsh-turn-cost/
   src/client/cost-format.ts / locales.ts / icons.tsx
   src/client/*.module.css         pill 与弹窗皮肤（全走 DSH 主题变量）
   tests/prices.test.mjs           价表/峰谷/边界 10 项
-  tests/projection.test.mjs       折叠语义/替换/重试/自身口径/锚点/健壮性 18 项
-  tests/cost-format.test.mjs      显示格式（CNY 单标注/下限/千分位）5 项
+  tests/projection.test.mjs       折叠语义/替换/重试/自身口径/锚点/provider 白名单/未计价可见降级/健壮性 25 项
+  tests/cost-format.test.mjs      显示格式（CNY 单标注/下限/千分位/provider 列表紧凑显示）6 项
   tests/row-placement.test.mjs    落位回归 13 项（自建极简 DOM 夹具）
   tests/subagent-cost.test.mjs    子代理聚合 11 项（后代发现/归属/兜底/退化）
   tests/dialog-pages.test.mjs     弹窗分页 19 项（页数/钳制/翻页/单页退化/三页结构/文案）
@@ -209,7 +211,7 @@ dsh-turn-cost/
 # 构建（自动探测 DSH checkout，也可 DSH_CHECKOUT=/path/to/DSH）
 npm run build            # = bash scripts/build.sh（类型检查）+ tsdown（产物）
 npm run build:client     # 只出产物
-npm test                 # node --test tests/*.test.mjs（76 项）
+npm test                 # node --test tests/*.test.mjs（84 项）
 
 # 数值复核（真会话日志回放，会打印逐轮表格并核对与原生 token 口径一致）
 node scripts/replay-session.mjs ~/.dsh/sessions/<cwd>/<sessionId>/
@@ -232,7 +234,7 @@ node scripts/replay-session.mjs <会话目录> --tree --pages
 | 项目 | 结果 |
 |---|---|
 | 类型检查（tsc，strict） | 通过，0 错误 |
-| 单元测试 | **76/76 通过**（峰谷边界、跨价格版本、替换/重试语义、跨轮换模型、非计价 provider、脏输入健壮性、持久化往返、**继承前缀的自身口径**、**子代理锚点**、金额显示格式、**落位回归 13 项**、**子代理聚合 11 项**、**弹窗分页 19 项**） |
+| 单元测试 | **84/84 通过**（峰谷边界、跨价格版本、替换/重试语义、跨轮换模型、非计价 provider、**provider 白名单（deepseek-official / deepseek-account / 相似未收录 id）**、**未计价 provider 的可见降级（wire 事实 + 持久往返 + schema 脏输入）**、脏输入健壮性、持久化往返、**继承前缀的自身口径**、**子代理锚点**、金额显示格式、**落位回归 13 项**、**子代理聚合 11 项**、**弹窗分页 19 项**） |
 | host 装配 | loader entry `active`，投影 key `turnCost` 出现在活体注册表（与 `tokenUsage`/`sessionStats` 并列） |
 | client 装配 | client-modules 模块表（58 条）含 `dsh-turn-cost → /mnt/e/测试/dsh-turn-cost/lib/client.js` |
 | 重新装配 | 重启 dsh web（profile bundles）或重置 loader 条目后，host 与 client 半均正常加载；`lib/client.js` 的 require 仍恰好是平台模块表的 4 个模块 |
@@ -248,13 +250,21 @@ node scripts/replay-session.mjs <会话目录> --tree --pages
 | 目视反馈修复（第一轮） | ① 会话 pill 掉到第二行 → portal 进原生统计行 ✓ ② ¥ 图标 + ¥ 文本重复标注 → 金币图标 + `花费 X CNY` ✓ |
 | 目视反馈修复（第二轮） | ③ 每轮 pill 一直在分支之前 → 落位改为"不依赖结构假设"：`findActionRow` 向上找真动作行 + portal + MutationObserver + 双线索识别 + 降级可见标记（用户截图确认位置已正确 ✓） ④ 金币 ￥ 太小 → 按原生图标基准（r=6.375/1.25）重画并放大 ¥ 字面 ⑤ 脚注文案改为「DeepSeek 官方 API 价格」 |
 | 目视确认（2026-09-12 作者确认） | **弹窗分页的观感与手感**：翻页控件位置 / 大小 / 配色、翻页时面板高度稳定、页码信息量、`←/→`·`Enter`·`Esc` 手感 —— 均由作者目视确认无问题 ✓。仍待补：fork 种子（`isSeeded`）子会话的真实数据核对（本机 52 个真实会话里 0 个种子会话，仅有单测覆盖） |
+| 迁移后重验（2026-09-30，新路径 `E:\DSH-plugin\dsh-turn-cost`） | `bash scripts/dev-build.sh`（WSL）全绿：tsc strict 0 错误、tsdown 产物重建（含新增 `lib/providers.js`）、**84/84 单测**（当时为 78/78，其后加入未计价可见降级的 6 项）；另核对 `lib/client.js.map` 的 `sourcesContent` 与 13 个 `src/client/*` **逐字节相同**（客户端产物未陈旧） |
+| 0.2.0-rc.2 桌面端：provider 白名单修复（2026-09-30） | 用**真实 v4 会话日志**（`session.v4.jsonl.zstd`）复现并修掉了静默零值：修复前 `折叠 0 轮 / ¥0.000000`（该会话 provider 为 `deepseek-account`，不在旧白名单 `['deepseek-official']` 内）；修复后同一份日志 **3 轮、会话累计 ¥0.910124**，且 token 口径与原生 `tokenUsage` 复刻**仍逐项一致** ✓ |
+| 未计价 provider 的可见降级（2026-09-30） | 合成事件核对（`lib/projection.js` → `lib/client/rows.js`）：纯未计价 → wire `unpriced = {providers:[zai-coding],samples:1,byTurn:{1:[zai-coding]}}`，pill 标签 `花费 未计价（zai-coding）`，脚注 `… · 未计入金额（这些 provider 不在计价白名单内）：zai-coding`；混合情形标签 `花费 0.0010 CNY · 未计价 provider zai-coding`（金额仍只累计已计价请求）。英文文案同步 ✓ |
+| 发布 0.1.1（2026-09-30） | `version` 0.1.0 → **0.1.1**，提交并打 tag `v0.1.1`，`npm pack` 产出 `dsh-turn-cost-0.1.1.tgz`。本次内容：provider 白名单显式化（`src/providers.ts`）+ `PRICE_REVISION` 2 + 未计价 provider 可见降级 + 迁移后文档校准（新路径 / v4 日志 / 78→84 项单测） |
+| 挂载到桌面端 profile（2026-09-30） | 官方 CLI：`dsh plugin --profile desktop add link:E:\DSH-plugin\dsh-turn-cost` → `profiles/desktop/package.json` 的 `dependencies` 与 `dsh.profile.bundles` 均写入，`node_modules/dsh-turn-cost` 为指向本仓库的 junction；`dsh plugin list` 显示 3 个包（原有 better-sidebar / whale-widget 未受影响）✓。桌面 profile **未启用 HMR**，故需重启桌面端后才会加载（安装本身已被插件管理器接受，未触发 `incompatible-version`） |
 
 ---
 
 ## 9. 已知边界
 
 - **子代理花费的边界**见 §11.4（逐轮归属是时间窗规则、只聚合会话列表里可见的后代、历史缓存行未刷新时该子会话暂时缺席）。
-- **非 DeepSeek 路由**（如 GLM）默认不计价、该轮不显示花费。
+- **非 DeepSeek 路由**（如 GLM）默认不计价、该轮不显示花费。官方 provider id 见 `src/providers.ts`。
+- **provider 改名会静默归零（2026-09-30 已修）**：DSH 0.2.0-rc.2 起桌面端账号路由的 provider id 是 `deepseek-account`（官方包 `@deepseek-ai/dsh-llm-deepseek-account` 的 `PROVIDER` 常量），而旧白名单只认 `deepseek-official` → 所有金额**静默**算成 0（不报错、pill 照常显示）。现已把官方 id 显式列举在 `src/providers.ts`，并把 `PRICE_REVISION` 提到 **2**（旧缓存行里写下的 0 随之作废重算）；同时补上**可见降级**：未计价的 provider 会写进 wire 的 `unpriced`，pill 标签与弹窗脚注显式标出（完全没有可计价金额时显示 `花费 未计价（<id>）` 而非 `0 CNY`）。
+- **未计价的粒度边界**：`unpriced` 只覆盖**本会话自己**的请求。子会话若跑在未收录的 provider 上，它对父会话的贡献是 0，而父会话 pill **不会**因此被标记（聚合不读子会话的 `unpriced`）。要彻底覆盖需要把子会话的 `unpriced` 也并入聚合，尚未实现。
+- **同一 `(turn, step)` 的未计价样本**：按"每次样本 +1"计数，不做替换语义（金额那边才有替换槽）。因此重试造成的重复计数只会让 `unpriced.samples` 偏大，不影响金额与标签。
 - **账户余额、充值、额度**等平台侧账务不在本插件职责内：本插件只做"token × 官方单价"的推算。
 - **v4-pro 2026-09-14 12:00 后的改路由**不在本版：届时在 `src/prices.ts` 的 PRO 家族补一条 `from` 规则并 +1 `PRICE_REVISION`（价表修订号与投影 `stateVersion` 绑定，旧缓存行会自动作废重算）。
 - 价格表变更需重载插件；`placement` 改动同样随重载生效。

@@ -2,8 +2,9 @@
  * 真实会话日志回放验证（开发/验收工具，不参与插件运行）。
  *
  * 做三件事：
- *   1. 读 DSH 的会话日志（`sessions/<cwd>/<sessionId>/session.v3.jsonl.zstd`，
- *      Node 内置 zstd 解压）；
+ *   1. 读 DSH 的会话日志（`sessions/<cwd>/<sessionId>/session.v<N>.jsonl.zstd`；
+ *      日志文件按 `*.jsonl.zstd` 匹配，v2 / v3 / **v4**（DSH 0.2.0-rc.2 起）
+ *      都可读；Node 内置 zstd 解压）；
  *   2. 用本插件的 `turnCost` 折叠算出每轮 / 会话花费；
  *   3. **同时**用一份原生 `tokenUsage` 投影算法的复刻算出 token 总量，与我们的
  *      token 桶逐项对比 —— 一致即证明"账目口径与原生「用量」pill 相同，差异只在

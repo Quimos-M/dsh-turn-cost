@@ -26,10 +26,10 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type { TurnCostEntry, TurnCostPlacement } from '../types.ts'
 import { CostDialog } from './CostDialog.tsx'
 import { useAnchoredDialog } from './anchored-dialog.ts'
-import { formatCost } from './cost-format.ts'
+import { formatCost, formatProviders } from './cost-format.ts'
 import { agentPages } from './dialog-pages.ts'
 import { IconCoinOutline16 } from './icons.tsx'
-import { footnote } from './rows.ts'
+import { footnote, unpricedNotes } from './rows.ts'
 import { OWN_ATTRIBUTE, findActionRow, reposition } from './row-placement.ts'
 import { NO_SUBAGENTS, rollupSubagentCost, type SubagentCostRollup } from './subagent-cost.ts'
 import css from './pill.module.css'
@@ -139,16 +139,26 @@ export function TurnCostAction({
   const slice = turn === null ? undefined : rollup.byTurn[String(turn)]
   const ownCost = entry?.cost.total ?? 0
   const grand = ownCost + (slice?.cost ?? 0)
-  if (value === undefined || turn === null || grand <= 0) return null
+  // 本轮未计价的 provider（会话级 wire 里按轮记着）。金额为 0 但有它时必须显示：
+  // 这正是过去"钱花了但 pill 不出现"的静默情形。
+  const unpricedTurn = turn === null || value?.unpriced === undefined
+    ? []
+    : value.unpriced.byTurn[String(turn)] ?? []
+  const unpricedIds = formatProviders(unpricedTurn)
+  const hasAmount = grand > 0
+  if (value === undefined || turn === null || (!hasAmount && unpricedIds === '')) return null
 
-  const total = formatCost(grand)
   // 落位降级（没找到原生动作行）时在标签里显式标出来：这是"肉眼可见的自证"，
   // 避免"看起来一样、其实没落位"的沉默失败。
   const placed = host !== undefined && host !== null
   const marker = slice === undefined ? '' : ` · ${t('cost.withSubagents')} ${String(slice.rows.length)}`
+  // 金额为 0 时不说 "0 CNY"，改说"未计价（provider）"：避免用 0 假装精确。
+  const amount = hasAmount
+    ? `${formatCost(grand)}${marker}${unpricedIds === '' ? '' : ` · ${t('cost.unpricedMarker')} ${unpricedIds}`}`
+    : `${t('cost.unpricedAmount')}（${unpricedIds}）`
   const label = placed
-    ? `${t('cost.spend')} ${total}${marker}`
-    : `${t('cost.spend')} ${total}${marker} · ${t('cost.placeFallback')}`
+    ? `${t('cost.spend')} ${amount}`
+    : `${t('cost.spend')} ${amount} · ${t('cost.placeFallback')}`
   // 分页：第 1 页总计（本轮自身 + 归属到本轮的子代理）、第 2 页本轮自身、第 3 页起
   // 该轮调用的每个子代理一页；本轮没有子代理时退化为单页（不渲染翻页控件）。
   const own = entry ?? EMPTY_ENTRY
@@ -174,7 +184,7 @@ export function TurnCostAction({
         className={`${css.trigger} ${css.row}`}
         aria-haspopup="dialog"
         aria-expanded={seat.open}
-        aria-label={placed ? `${t('turn.consumed')} ${total}` : `${t('turn.consumed')} ${total}（${t('cost.placeFallback')}）`}
+        aria-label={placed ? `${t('turn.consumed')} ${amount}` : `${t('turn.consumed')} ${amount}（${t('cost.placeFallback')}）`}
         onClick={() => { seat.setOpen(!seat.open) }}
       >
         <IconCoinOutline16 />
@@ -192,7 +202,10 @@ export function TurnCostAction({
             entry === undefined ? null : entry.peak,
             entry?.asOf ?? value.priceAsOf,
             entry?.est === true,
-            slice === undefined || slice.rows.length === 0 ? [] : [t('cost.subagentNote')],
+            [
+              ...slice === undefined || slice.rows.length === 0 ? [] : [t('cost.subagentNote')],
+              ...unpricedNotes(t, unpricedTurn),
+            ],
           )}
           pager={{ prev: t('cost.prevPage'), next: t('cost.nextPage') }}
         />

@@ -7,6 +7,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createTurnCostProjection } from '../lib/projection.js'
+import { PRICE_REVISION } from '../lib/prices.js'
 
 /** 北京时间 ISO → epoch ms。 */
 const bj = iso => Date.parse(`${iso}+08:00`)
@@ -147,7 +148,7 @@ test('跨轮换模型：每轮按各自模型计价，会话累计为各轮之�
   assert.equal(view.totals.cost.miss, 5500)
 })
 
-test('非计价 provider 不计入（默认只认 deepseek-official）', () => {
+test('非计价 provider 不计入（默认只认 ./providers.ts 里的官方白名单）', () => {
   const events = [
     header('glm-5.3', 'zai-coding'),
     message({
@@ -161,6 +162,33 @@ test('非计价 provider 不计入（默认只认 deepseek-official）', () => {
 
   const priced = run(events, { pricedProviders: ['*'] }).view
   assert.equal(priced.turns['1'].cost.miss, 1000)
+})
+
+test('官方白名单：deepseek-official 与 deepseek-account 同价计价，相似但未收录的 id 不计价', () => {
+  const usage = { inputTokens: 1000, outputTokens: 0 }
+  const priceOf = provider => run([
+    header('deepseek-v4-flash', provider),
+    message({ turn: 1, step: 1, time: VALLEY, provider, usage }),
+  ]).view
+
+  // DSH 0.1.5-rc.1 及更早：内建官方 provider。
+  const legacy = priceOf('deepseek-official')
+  assert.equal(legacy.turns['1'].cost.miss, 1000)
+  // DSH 0.2.0-rc.2 起：桌面端账号登录的官方 provider（曾因漏收录而静默算成 0）。
+  const account = priceOf('deepseek-account')
+  assert.equal(account.turns['1'].cost.miss, 1000)
+  assert.deepEqual(account.totals.cost, legacy.totals.cost)
+  assert.deepEqual(account.turns['1'].tok, legacy.turns['1'].tok)
+
+  // 白名单是**显式列举**：名字相似但未收录的 id 一律不计价（不按 `deepseek-` 前缀猜）。
+  const lookalike = priceOf('deepseek-account-eu')
+  assert.deepEqual(lookalike.turns, {})
+  assert.equal(lookalike.totals.cost.total, 0)
+})
+
+test('价表/口径修订号已跟进：stateVersion = PRICE_REVISION = 2（旧缓存行据此作废重算）', () => {
+  assert.equal(PRICE_REVISION, 2)
+  assert.equal(createTurnCostProjection().stateVersion, PRICE_REVISION)
 })
 
 test('配置：placement 随投影下发；peakPricing=false 时一律谷价', () => {
@@ -370,4 +398,83 @@ test('持久缓存往返：stateSchema.parse(view 之外的真实状态) 保形'
   assert.deepEqual(restored, state)
   assert.equal(definition.wire.view(restored).turns['3'].cost.hit, 0) // 20 × 0.02 = 0.4 µ¥ → 进位到 0
   assert.equal(definition.wire.view(restored).placement, 'after-time')
+})
+
+// --------------------------------------------- 未计价 provider（可见降级，2026-09-30）
+
+/** 一条来自未计价 provider 的用量样本（不带 request/header，靠 message.source 归因）。 */
+const unpricedMessage = ({ turn, step, time, provider, model = 'glm-5.3' }) => ({
+  type: 'assistant/message',
+  time,
+  data: {
+    turn,
+    step,
+    usage: { inputTokens: 100, outputTokens: 50 },
+    message: { source: { provider, model } },
+  },
+})
+
+test('未计价 provider：金额不计入，但事实照旧进 wire（provider + 轮次）', () => {
+  const { view } = run([unpricedMessage({ turn: 1, step: 1, time: VALLEY, provider: 'zai-coding' })])
+  assert.deepEqual(view.turns, {})
+  assert.equal(view.totals.cost.total, 0)
+  assert.deepEqual(view.unpriced, {
+    providers: ['zai-coding'],
+    samples: 1,
+    byTurn: { 1: ['zai-coding'] },
+  })
+})
+
+test('未计价 provider：全都计价时不出现该字段（常见情形 wire 零变化）', () => {
+  const { view } = run([
+    header('deepseek-v4-flash'),
+    message({ turn: 1, step: 1, time: VALLEY, usage: { inputTokens: 1000, outputTokens: 10 } }),
+  ])
+  assert.equal('unpriced' in view, false)
+})
+
+test('未计价 provider：与已计价请求混在一起时，金额只累计已计价的部分', () => {
+  const { view } = run([
+    header('deepseek-v4-flash'),
+    message({ turn: 1, step: 1, time: VALLEY, usage: { inputTokens: 1000, outputTokens: 0 } }),
+    unpricedMessage({ turn: 1, step: 2, time: VALLEY, provider: 'zai-coding' }),
+    unpricedMessage({ turn: 2, step: 1, time: VALLEY, provider: 'zai-coding' }),
+  ])
+  assert.equal(view.turns['1'].cost.miss, 1000)
+  assert.equal(view.totals.cost.total, 1000)
+  assert.equal(view.unpriced.samples, 2)
+  assert.deepEqual(view.unpriced.byTurn, { 1: ['zai-coding'], 2: ['zai-coding'] })
+})
+
+test('未计价 provider：多个 provider 按样本数降序、同数按 id 升序', () => {
+  const { view } = run([
+    unpricedMessage({ turn: 1, step: 1, time: VALLEY, provider: 'zeta' }),
+    unpricedMessage({ turn: 1, step: 2, time: VALLEY, provider: 'alpha' }),
+    unpricedMessage({ turn: 1, step: 3, time: VALLEY, provider: 'alpha' }),
+  ])
+  assert.deepEqual(view.unpriced.providers, ['alpha', 'zeta'])
+  assert.equal(view.unpriced.samples, 3)
+  assert.deepEqual(view.unpriced.byTurn, { 1: ['alpha', 'zeta'] })
+})
+
+test('未计价 provider：持久往返保形，view schema 对脏输入不抛错', () => {
+  const definition = createTurnCostProjection()
+  let state = definition.init()
+  state = definition.apply(state, unpricedMessage({ turn: 1, step: 1, time: VALLEY, provider: 'zai-coding' }))
+  const restored = definition.stateSchema.parse(JSON.parse(JSON.stringify(state)))
+  assert.deepEqual(restored, state)
+
+  const view = definition.wire.view(restored)
+  assert.deepEqual(definition.wire.viewSchema.parse(JSON.parse(JSON.stringify(view))), view)
+
+  // 脏输入：给出合法形状且不抛错（全函数 schema 契约）。
+  assert.doesNotThrow(() => { definition.stateSchema.parse({ unpriced: 'nope' }) })
+  assert.deepEqual(definition.stateSchema.parse({ unpriced: { 1: { x: -1 } } }).unpriced, {})
+  assert.doesNotThrow(() => { definition.wire.viewSchema.parse({ unpriced: { providers: 7 } }) })
+  assert.equal(definition.wire.viewSchema.parse({ unpriced: { providers: 7 } }).unpriced, undefined)
+  assert.equal(definition.wire.viewSchema.parse({ unpriced: {} }).unpriced, undefined)
+  assert.deepEqual(
+    definition.wire.viewSchema.parse({ unpriced: { providers: ['a'], samples: 2, byTurn: { 1: ['a'] } } }).unpriced,
+    { providers: ['a'], samples: 2, byTurn: { 1: ['a'] } },
+  )
 })

@@ -6,7 +6,7 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { formatCost, formatCostWithTokens, formatHitRate, formatTokens } from '../lib/client/cost-format.js'
+import { formatCost, formatCostWithTokens, formatHitRate, formatProviders, formatTokens } from '../lib/client/cost-format.js'
 
 test('金额：四位小数 + CNY 单位', () => {
   assert.equal(formatCost(1_680_856), '1.6809 CNY')
@@ -36,4 +36,13 @@ test('token 千分位与命中率', () => {
   assert.equal(formatTokens(0), '0')
   assert.equal(formatHitRate(900, 100), '90.0%')
   assert.equal(formatHitRate(0, 0), null)
+})
+
+test('未计价 provider 列表：紧凑显示，超出上限以省略号收尾', () => {
+  assert.equal(formatProviders([]), '')
+  assert.equal(formatProviders(['', '']), '')
+  assert.equal(formatProviders(['deepseek-account']), 'deepseek-account')
+  assert.equal(formatProviders(['a', 'b']), 'a / b')
+  assert.equal(formatProviders(['a', 'b', 'c']), 'a / b …')
+  assert.equal(formatProviders(['a', 'b', 'c'], 3), 'a / b / c')
 })

@@ -9,8 +9,9 @@
  *     样本覆盖，与原生一致）；
  *   * 重试：`llm/retry-started` 清掉替换槽，于是重试后的 attempt **累加**（失败
  *     重试的每一次请求都真实计费）；
- *   * 未收录模型 → 兜底档估算并标 `≈`；非计价 provider（默认只认
- *     `deepseek-official`）→ 跳过，不污染累计。
+ *   * 未收录模型 → 兜底档估算并标 `≈`；非计价 provider → 跳过金额累计，但**把事实
+ *     记进 `unpriced`**（官方 provider 白名单**显式列举**在 `./providers.ts`）。
+ *     这一点是刻意的**可见降级**：静默丢弃会让"钱花了但显示 0"无从发现。
  *
  * **健壮性契约（本插件的硬要求）**：`apply` 被框架在**每个会话的每个事件**上
  * 同步调用（见 session-projection 的 drive/advanceCell），因此
@@ -27,10 +28,11 @@ import type { ZodType } from 'zod'
 import type { SessionEvent } from '@deepseek-ai/dsh-session/types'
 import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
 import { PRICE_AS_OF, PRICE_REVISION, costOf, resolvePrice } from './prices.ts'
+import { OFFICIAL_PROVIDER_IDS, isOfficialProvider } from './providers.ts'
 import type {
   CostBucketsMicro, TokenBuckets, TurnCostAccumulator, TurnCostEntry, TurnCostOwnTurn,
   TurnCostPlacement, TurnCostProjection, TurnCostSpawn, TurnCostState, TurnCostStateOwnTurn,
-  TurnCostStateSpawn, TurnCostStateTurn,
+  TurnCostStateSpawn, TurnCostStateTurn, TurnCostUnpriced,
 } from './types.ts'
 
 /** 投影键。 */
@@ -59,12 +61,20 @@ const PROJECTION_STATE_VERSION = PRICE_REVISION
 /** 直接子会话锚点：`subagent/catalog`（父会话自有事实，不带用量）。 */
 const EVENT_SUBAGENT_CATALOG = 'subagent/catalog'
 
-/** 默认计价 provider：DeepSeek 官方路由。 */
-const DEFAULT_PRICED_PROVIDERS: readonly string[] = ['deepseek-official']
+/**
+ * 默认计价 provider：DeepSeek 官方路由。
+ *
+ * 具体 id 全部列举在 `./providers.ts`（**唯一维护点**）——DSH 新增官方 provider
+ * 时只改那个文件；这里不再写死任何 id。
+ */
+const DEFAULT_PRICED_PROVIDERS: readonly string[] = OFFICIAL_PROVIDER_IDS
 
 /** 插件配置（loader 条目的 config）。 */
 export interface TurnCostOptions {
-  /** 参与计价的路由 provider；`'*'` 表示按模型 id 计价一切路由。 */
+  /**
+   * 参与计价的路由 provider；`'*'` 表示按模型 id 计价一切路由。
+   * 缺省（或给出空数组）= `./providers.ts` 的官方白名单。
+   */
   pricedProviders?: readonly string[]
   /** 关闭峰谷分时（一律谷价）。 */
   peakPricing?: boolean
@@ -169,8 +179,7 @@ function replaceDelta(next: TurnCostAccumulator, previous: TurnCostAccumulator |
 }
 
 function isPriced(provider: string, options: ResolvedOptions): boolean {
-  if (provider === '') return true
-  return options.pricedProviders.includes('*') || options.pricedProviders.includes(provider)
+  return isOfficialProvider(provider, options.pricedProviders)
 }
 
 /** 事件序号（缺失/非数字一律当 0；序号只用于"是否属于继承前缀"的判定）。 */
@@ -204,6 +213,26 @@ function addOwnTurn(
   return start === undefined ? next : { ...next, startedAt: start }
 }
 
+/**
+ * 记下"这一轮有一次请求因 provider 未收录而没被计价"。
+ *
+ * 这是**可见降级**的数据来源：金额照旧不计入（口径不变），但事实会随 wire 下发，
+ * 于是客户端能明确显示"未计价 provider"，而不是把这次请求默默当成 0 元。
+ * @param state - 当前状态。
+ * @param turn - 该请求所属轮号。
+ * @param provider - 未被计价的路由 provider id。
+ * @returns 记好事实的新状态（计数 +1）。
+ */
+function noteUnpriced(state: TurnCostState, turn: number, provider: string): TurnCostState {
+  const key = String(turn)
+  const previous = state.unpriced[key]
+  const count = (previous?.[provider] ?? 0) + 1
+  return {
+    ...state,
+    unpriced: { ...state.unpriced, [key]: { ...previous, [provider]: count } },
+  }
+}
+
 /** 一次 usage 采样 → 新状态（替换语义 + 每轮/累计双写）。 */
 function accrue(
   state: TurnCostState,
@@ -220,7 +249,7 @@ function accrue(
 
   const route = routePair(recordOf(data.message).source) ?? state.header
   const provider = route?.provider ?? ''
-  if (!isPriced(provider, options)) return state
+  if (!isPriced(provider, options)) return noteUnpriced(state, turn, provider)
 
   const model = route?.model ?? ''
   const at = typeof event.time === 'number' && Number.isFinite(event.time) ? event.time : Date.now()
@@ -414,6 +443,7 @@ function project(state: TurnCostState): TurnCostProjection {
       ...value.label === undefined ? {} : { label: value.label },
     }
   }
+  const unpriced = projectUnpriced(state)
   return {
     totals: {
       cost: {
@@ -436,7 +466,45 @@ function project(state: TurnCostState): TurnCostProjection {
     ownTurns,
     spawns,
     ownComplete: state.ownComplete === 1,
+    ...unpriced === undefined ? {} : { unpriced },
   }
+}
+
+/**
+ * 把状态里的"未计价用量"折成 wire 形状（次数降序、id 升序，输出稳定）。
+ *
+ * 一条都没有时返回 `undefined` —— 于是绝大多数会话的 wire 值完全不变（也就不会
+ * 因为这次改造多出任何字段）。
+ * @param state - 折叠状态。
+ * @returns wire 形状；无未计价用量时 `undefined`。
+ */
+function projectUnpriced(state: TurnCostState): TurnCostUnpriced | undefined {
+  const counts = new Map<string, number>()
+  const byTurn: Record<string, string[]> = {}
+  for (const turnKey of Object.keys(state.unpriced).sort(compareTurnKeys)) {
+    const providersRaw = state.unpriced[turnKey]
+    if (providersRaw === undefined) continue
+    const ids = Object.keys(providersRaw).filter(id => id !== '' && (providersRaw[id] ?? 0) > 0)
+    if (ids.length === 0) continue
+    ids.sort()
+    byTurn[turnKey] = ids
+    for (const id of ids) counts.set(id, (counts.get(id) ?? 0) + (providersRaw[id] ?? 0))
+  }
+  let samples = 0
+  for (const count of counts.values()) samples += count
+  if (samples === 0) return undefined
+  const providers = [...counts.entries()]
+    .sort((left, right) => right[1] - left[1] || (left[0] < right[0] ? -1 : 1))
+    .map(([id]) => id)
+  return { providers, samples, byTurn }
+}
+
+/** 轮号键排序：能当数字比就按数字比，否则退回字典序（脏输入也不抛错）。 */
+function compareTurnKeys(left: string, right: string): number {
+  const a = Number(left)
+  const b = Number(right)
+  if (Number.isFinite(a) && Number.isFinite(b) && a !== b) return a - b
+  return left < right ? -1 : left > right ? 1 : 0
 }
 
 /** 空视图：view 万一失手时的安全牌（宁可少显示，不可抛错）。 */
@@ -513,6 +581,17 @@ const stateSchema = {
       }
     }
     const currentTurn = optionalCountOf(raw.currentTurn)
+    const unpricedRaw = recordOf(raw.unpriced)
+    const unpriced: Record<string, Record<string, number>> = {}
+    for (const turnKey of Object.keys(unpricedRaw)) {
+      const providersRaw = recordOf(unpricedRaw[turnKey])
+      const providers: Record<string, number> = {}
+      for (const id of Object.keys(providersRaw)) {
+        const count = countOf(providersRaw[id])
+        if (id !== '' && count > 0) providers[id] = count
+      }
+      if (Object.keys(providers).length > 0) unpriced[turnKey] = providers
+    }
     return {
       totals: {
         costHit: countOf(totalsRaw.costHit),
@@ -559,13 +638,40 @@ const stateSchema = {
           tokOut: countOf(ownLastRaw.tokOut),
         },
       spawns,
+      unpriced,
     }
   },
+}
+
+/**
+ * 清洗 wire 形状的 `unpriced`（全函数：脏输入 → `undefined`，绝不抛错）。
+ *
+ * 与 `projectUnpriced` 的产出保持同一形状；没有任何 provider 时视作"没有这件事"。
+ * @param value - 待清洗的值。
+ * @returns 清洗后的 `unpriced`；无法解释为空列表时 `undefined`。
+ */
+function parseUnpriced(value: unknown): TurnCostUnpriced | undefined {
+  const raw = recordOf(value)
+  if (raw.providers === undefined && raw.samples === undefined) return undefined
+  const providers = Array.isArray(raw.providers)
+    ? raw.providers.filter((id): id is string => typeof id === 'string' && id !== '')
+    : []
+  if (providers.length === 0) return undefined
+  const byTurnRaw = recordOf(raw.byTurn)
+  const byTurn: Record<string, string[]> = {}
+  for (const turnKey of Object.keys(byTurnRaw)) {
+    const list = byTurnRaw[turnKey]
+    if (!Array.isArray(list)) continue
+    const ids = list.filter((id): id is string => typeof id === 'string' && id !== '')
+    if (ids.length > 0) byTurn[turnKey] = ids
+  }
+  return { providers, samples: countOf(raw.samples), byTurn }
 }
 
 const viewSchema = {
   parse(value: unknown): TurnCostProjection {
     const raw = recordOf(value)
+    const unpriced = parseUnpriced(raw.unpriced)
     const totalsRaw = recordOf(raw.totals)
     const totalsCost = recordOf(totalsRaw.cost)
     const totalsTok = recordOf(totalsRaw.tok)
@@ -648,6 +754,7 @@ const viewSchema = {
       spawns,
       // 只有显式 true 才算"覆盖整段日志"：缺失/非法一律按"未覆盖"处理（保守读法）。
       ownComplete: raw.ownComplete === true,
+      ...unpriced === undefined ? {} : { unpriced },
     }
   },
 }
@@ -712,6 +819,7 @@ export function createTurnCostProjection(
       ownComplete: 1,
       ownLast: null,
       spawns: {},
+      unpriced: {},
     }),
     apply: (state, event) => {
       try {

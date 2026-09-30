@@ -38,7 +38,8 @@
 - **单价**：DeepSeek官方API价格，以人民币计价，按「模型家族 + 生效时间」版本化，并按请求时刻自动区分高峰 / 空闲（峰价 = 谷价 × 2；高峰为北京时间周一至周五 09:00–12:00、14:00–18:00）。例如 flash 系列当前空闲价为 **¥0.02 / ¥1 / ¥4**（每百万 token 的命中 / 未命中 / 输出），`deepseek-v4-pro` 按其自身价。历史会话用**当时**的价格（8/17 峰谷启用、8/23 起周末全天谷价、9/10 flash 降价，均已收录）。
 - **精度**：金额以**微元整数**累加（`round(tokens × 元/百万)`），无浮点漂移；显示为 `花费 1.1451 CNY`，不足 0.0001 元显示 `<0.0001 CNY`。
 - **与原生口径逐条对齐**：同一 `(turn, step)` 的流式样本会被最终样本**替换**；失败重试的每一次请求都**真实累加**（`llm/retry-started` 之后不清零）。
-- 未收录模型按同类价估算并在弹窗标注；**非 DeepSeek 官方 provider 的路由**（例如经 DSH 官方 `llm-pi-ai` 适配器接入的第三方模型）默认不计价，其请求该轮不显示花费（其他被计价的请求照常累计），可用插件配置 `pricedProviders` 放开（配置写在 profile 的 `cordis.patch.yml` insert 行 `config` 里）。
+- 未收录模型按同类价估算并在弹窗标注；**非官方 provider 的路由**（例如经 DSH 官方 `llm-pi-ai` 适配器接入的第三方模型）默认不计价（其他被计价的请求照常累计），可用插件配置 `pricedProviders` 放开（配置写在 profile 的 `cordis.patch.yml` insert 行 `config` 里；`'*'` = 全部放开）。**官方 provider id 显式列举在 `src/providers.ts`**（唯一维护点）：目前收录 `deepseek-official`（DSH 0.1.5-rc.1 及更早）与 `deepseek-account`（DSH 0.2.0-rc.2 起账号登录 / 桌面端）。
+- **未计价会显式标出（不会静默显示 0）**：只要有请求因 provider 未收录而没计价，pill 标签就写 `· 未计价 provider <id>`；若整个会话/这一轮**完全没有**可计价的金额，则写 `花费 未计价（<id>）` 而不是 `0 CNY`，弹窗脚注也说明金额不含这些 provider。这样"钱花了但没算进来"一眼可见——DSH 0.2.0-rc.2 把官方 provider 改名时，旧版正是静默失效的。
 - **口径边界（重要）**：以上数字是「官方公开价目表 × provider 上报 token」推算出的**估算值**，不等于 DeepSeek 开放平台的最终账单，**以开放平台为准**。会话花费与每轮花费**已包含子代理会话**（按官方会话列表聚合全部后代子会话，见上条）；仍**不包含**标题生成、联网搜索（`web/deepseek-search-llm-request`）这类同会话内但不走计价请求的旁路调用——平台会为这些请求扣费，但本插件的「会话花费」看不到。
 
 ## 免责与口径
@@ -77,7 +78,8 @@ dsh plugin --profile web add ./dsh-turn-cost-0.1.0.tgz
 
 ## 版本兼容性
 
-- 开发与验收环境：**DSH `0.1.5-rc.1`**（2026-09 构建）实测通过；同一 minor 版本**预期**可用（依赖面见下三条）。
+- 开发与验收环境：**DSH `0.1.5-rc.1`**（2026-09 构建）实测通过。
+- **DSH `0.2.0-rc.2`（桌面端）**：已逐条核对插件用到的全部公共接缝 —— 投影注册表与 provider 契约（**字节级未变**）、`/types` 合并点、两个 list 槽位 id、标准座位、客户端平台模块表（官方 9 条种子未变）、`__ModuleLoader__` 闭包工厂契约、`[data-composer-stats]` / `[data-turn-tail]` 锚点、主题变量与 React 18 —— 均**无需改动**（详见 [DESIGN.md](DESIGN.md) §8）。**唯一需要适配的是计价 provider**：0.2.0-rc.2 起桌面端账号路由的 provider id 是 `deepseek-account`，已收录进 `src/providers.ts` 并把 `PRICE_REVISION` 提到 2（漏掉它会让金额静默算成 0）。仍待办：每轮 pill 的原生「耗时」pill 在新版被移除，落位与 `placement='between'` 的适配见 DESIGN §9。
 - 只使用**公共接缝**：session 投影注册表、两个 list 槽位（新 id 追加）、客户端平台模块表（`react`、`@deepseek-ai/dsh-client-ui-primitives` 等），以及框架以 props 交付的全局标准座位 `useSessions`（官方会话列表，子代理聚合靠它读各会话的投影值——官方 ui-subagent 同款用法）。
 - **host 半没有任何运行时 import**（只 import type），不存在"依赖缺失导致加载失败"的路径；client 半只 require 平台模块表内的模块（`lib/client.js` 的 require 恰好是那 4 个）。
 - **降级**：子代理聚合所需的会话列表座位或某个子会话的投影值缺席时，子代理部分自动**不显示**，本会话自身的花费照常显示，不报错。

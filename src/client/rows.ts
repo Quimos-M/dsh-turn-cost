@@ -19,7 +19,7 @@
 
 import type { CostBucketsMicro, CostBucketsTotal, TokenBuckets, TokenBucketsTotal } from '../types.ts'
 import type { SubagentCostDetail, SubagentCostRow } from './subagent-cost.ts'
-import { formatCost, formatCostWithTokens, formatHitRate } from './cost-format.ts'
+import { formatCost, formatCostWithTokens, formatHitRate, formatProviders } from './cost-format.ts'
 import type { CostDialogRow } from './CostDialog.tsx'
 import type { TurnCostKey } from './locales.ts'
 
@@ -227,4 +227,26 @@ export function footnote(
   if (estimated) parts.push(t('cost.estimated'))
   parts.push(...notes)
   return parts.join(' · ')
+}
+
+/**
+ * 「未计价 provider」的脚注说明（两个 pill 共用；脚注每一页都渲染）。
+ *
+ * 这是**可见降级**的文案落点：金额里不包含这些 provider 的请求，必须说出来，
+ * 否则用户只会看到一个偏小（甚至为 0）的数字而无从判断。
+ * @param t - 文案座位。
+ * @param providers - 未计价的 provider id 列表（会话级用 wire 的 `providers`，
+ *   每轮 pill 用 `byTurn[turn]`）；空列表不追加任何说明。
+ * @param maxIds - 最多点名几个 provider（缺省 3）。
+ * @returns 追加到脚注的说明（0 或 1 条）。
+ */
+export function unpricedNotes(
+  t: Translate,
+  providers: readonly string[],
+  maxIds = 3,
+): string[] {
+  const ids = formatProviders(providers, maxIds)
+  if (ids === '') return []
+  // 分隔符写在文案里：中文用全角冒号、英文用半角，比共用一个 ` : ` 更像人话。
+  return [`${t('cost.unpricedNote')} ${ids}`]
 }

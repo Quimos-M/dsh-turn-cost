@@ -25,10 +25,10 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type { TurnCostProjection } from '../types.ts'
 import { CostDialog } from './CostDialog.tsx'
 import { useAnchoredDialog } from './anchored-dialog.ts'
-import { formatCost } from './cost-format.ts'
+import { formatCost, formatProviders } from './cost-format.ts'
 import { agentPages } from './dialog-pages.ts'
 import { IconCoinOutline16 } from './icons.tsx'
-import { footnote } from './rows.ts'
+import { footnote, unpricedNotes } from './rows.ts'
 import { NO_SUBAGENTS, modelsOfView, rollupSubagentCost, type SubagentCostRollup } from './subagent-cost.ts'
 import css from './pill.module.css'
 
@@ -126,12 +126,20 @@ export function SessionCostPill({ useProjection, useSessions, sessionId, t }: Se
 
   const own = value === undefined ? 0 : value.totals.cost.total
   const grand = own + rollup.cost
-  // 无投影（host 半未装配）或没有任何花费：整块不渲染，原生界面保持原样。
-  if (value === undefined || grand <= 0) return null
+  const unpriced = value?.unpriced
+  const unpricedIds = unpriced === undefined ? '' : formatProviders(unpriced.providers)
+  const hasAmount = grand > 0
+  // 无投影（host 半未装配）时不渲染。没有花费**且**没有被跳过的请求时也不渲染
+  // （原生界面保持原样）；但只要有未计价的请求就一定要显示 —— 那正是过去静默失效
+  // 的情形：钱花了，pill 却干脆不出现。
+  if (value === undefined || (!hasAmount && unpricedIds === '')) return null
 
-  const total = formatCost(grand)
   const latest = latestTurn(value)
   const marker = rollup.count === 0 ? '' : ` · ${t('cost.withSubagents')} ${String(rollup.count)}`
+  // 金额为 0 时不说 "0 CNY"，改说"未计价（provider）"：避免用 0 假装精确。
+  const amount = hasAmount
+    ? `${formatCost(grand)}${marker}${unpricedIds === '' ? '' : ` · ${t('cost.unpricedMarker')} ${unpricedIds}`}`
+    : `${t('cost.unpricedAmount')}（${unpricedIds}）`
   // 分页：第 1 页总计（主 Agent + 全部子代理）、第 2 页本会话自身、第 3 页起每个子代理
   // 一页；没有子代理时退化为单页（不渲染翻页控件）。
   const pages = agentPages(t, {
@@ -148,11 +156,11 @@ export function SessionCostPill({ useProjection, useSessions, sessionId, t }: Se
         className={`${css.trigger} ${css.dock}`}
         aria-haspopup="dialog"
         aria-expanded={seat.open}
-        aria-label={`${t('session.consumed')} ${total}`}
+        aria-label={`${t('session.consumed')} ${amount}`}
         onClick={() => { seat.setOpen(!seat.open) }}
       >
         <IconCoinOutline16 />
-        <span className={css.label}>{`${t('cost.spend')} ${total}${marker}`}</span>
+        <span className={css.label}>{`${t('cost.spend')} ${amount}`}</span>
       </button>
       {seat.open && (
         <CostDialog
@@ -166,7 +174,10 @@ export function SessionCostPill({ useProjection, useSessions, sessionId, t }: Se
             latest?.peak ?? null,
             latest?.asOf ?? value.priceAsOf,
             value.est === true,
-            rollup.rows.length === 0 ? [] : [t('cost.subagentNote')],
+            [
+              ...rollup.rows.length === 0 ? [] : [t('cost.subagentNote')],
+              ...unpricedNotes(t, unpriced?.providers ?? []),
+            ],
           )}
           pager={{ prev: t('cost.prevPage'), next: t('cost.nextPage') }}
         />

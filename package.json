@@ -1,6 +1,6 @@
 {
   "name": "dsh-turn-cost",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "DSH Web 插件：按 DeepSeek 官方人民币定价（含峰谷分时）显示每轮对话花费与会话累计花费，点开可查看缓存命中输入 / 缓存未命中输入 / 输出的分项金额。",
   "keywords": [
     "dsh",

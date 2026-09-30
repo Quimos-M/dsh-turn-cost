@@ -86,6 +86,23 @@ export interface TurnCostSpawn {
   label?: string
 }
 
+/**
+ * 因 provider 不在计价白名单内而**未被计价**的用量事实（可见降级）。
+ *
+ * 为什么需要它：这类请求以前是**静默**的 —— 金额算成 0，甚至整个 pill 根本不出现，
+ * 用户无从知道"钱花了但没算进来"（DSH 0.2.0-rc.2 把官方 provider 改名成
+ * `deepseek-account` 时，失效方式正是这种静默）。把事实带进 wire 之后，两个 pill 会
+ * 显式标出未计价的 provider，弹窗脚注也会说明金额不含它们。
+ */
+export interface TurnCostUnpriced {
+  /** 未计价的 provider id（按被跳过的样本数降序，同数按 id 升序）。 */
+  providers: string[]
+  /** 被跳过的 usage 样本总数（当前不直接显示，留给后续细化文案）。 */
+  samples: number
+  /** 轮号（十进制字符串）→ 该轮未计价的 provider id（去重、升序）。 */
+  byTurn: Record<string, string[]>
+}
+
 /** `turnCost` 投影的客户端可见值。 */
 export interface TurnCostProjection {
   /** 会话累计。 */
@@ -120,6 +137,11 @@ export interface TurnCostProjection {
    * 键为子会话 id。父会话据此把子会话的花费落到自己的轮次上。
    */
   spawns?: Record<string, TurnCostSpawn>
+  /**
+   * 有请求因 provider 未收录而**没被计价**（缺省 = 全都被计价了）。
+   * 客户端据此显示"未计价 provider"，而不是把这种请求当成 0 元。
+   */
+  unpriced?: TurnCostUnpriced
 }
 
 /** 折叠累加器（host 内部；投影缓存要求纯 JSON）。 */
@@ -193,6 +215,13 @@ export interface TurnCostState {
   ownLast: (TurnCostAccumulator & { turn: number; step: number }) | null
   /** 本会话自己创建的直接子会话锚点，键为子会话 id。 */
   spawns: Record<string, TurnCostStateSpawn>
+  /**
+   * 未计价的用量：轮号 → provider id → 被跳过的样本数（纯 JSON，可无损往返）。
+   *
+   * 只记事实、不影响任何金额累计：它的唯一用途是把"钱花了但没算进来"这件事
+   * 送到客户端显示出来（见 {@link TurnCostUnpriced}）。
+   */
+  unpriced: Record<string, Record<string, number>>
 }
 
 declare module '@deepseek-ai/dsh-session-projection/types' {

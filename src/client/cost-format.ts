@@ -61,3 +61,18 @@ export function formatHitRate(hit: number, miss: number): string | null {
 export function formatCostWithTokens(micro: number, tokens: number): string {
   return `${formatCost(micro)}（${formatTokens(tokens)} tokens）`
 }
+
+/**
+ * provider id 列表的紧凑显示（超出 `max` 个时以 `…` 省略尾部）。
+ *
+ * 用于"未计价 provider"的标注：pill 位置窄，最多点名前两个；弹窗脚注可以多给一个。
+ * @param providers - provider id 列表。
+ * @param max - 最多显示几个（缺省 2）。
+ * @returns 例如 `deepseek-account` / `a / b …`；空列表返回空串。
+ */
+export function formatProviders(providers: readonly string[], max = 2): string {
+  const list = providers.filter(id => id !== '')
+  if (list.length === 0) return ''
+  if (list.length <= max) return list.join(' / ')
+  return `${list.slice(0, max).join(' / ')} …`
+}
